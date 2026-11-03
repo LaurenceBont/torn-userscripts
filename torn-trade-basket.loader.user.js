@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trade Basket (live loader)
 // @namespace    laurence.torn.loader
-// @version      1.1.0
+// @version      1.2.0
 // @description  Loads the latest Torn Trade Basket from GitHub on every page load, so pushed changes apply on the next reload.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
@@ -14,6 +14,7 @@
 // @connect      raw.githubusercontent.com
 // @connect      tornexchange.com
 // @connect      www.tornexchange.com
+// @connect      api.torn.com
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.loader.user.js
 // @downloadURL  https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.loader.user.js

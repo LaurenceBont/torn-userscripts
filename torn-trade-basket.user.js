@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trade Basket
 // @namespace    laurence.torn
-// @version      0.5.0
+// @version      0.6.0
 // @description  Pick items on the Items page into a basket, sum market (TornTools) and TornExchange trader buy prices per line and in total, compare with what you receive.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
@@ -11,6 +11,7 @@
 // @grant        GM_xmlhttpRequest
 // @connect      tornexchange.com
 // @connect      www.tornexchange.com
+// @connect      api.torn.com
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.user.js
 // @downloadURL  https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.user.js
@@ -19,7 +20,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.5.0'; // keep in sync with @version
+  const VERSION = '0.6.0'; // keep in sync with @version
   const RAW_URL = 'https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.user.js';
   const LIVE_SHA = typeof TTB_LOADER_SHA !== 'undefined' ? TTB_LOADER_SHA : '';
 
@@ -57,6 +58,7 @@
   let trader = GM_getValue(KEY_TRADER, '04doolant');
   let te = GM_getValue(KEY_TE, null);       // { trader, ts, byId: {id: price}, byName: {name: price} }
   let teOn = GM_getValue('ttb_te_on_v1', false); // master switch: no TornExchange requests at all while off
+  let apiKey = GM_getValue('ttb_api_key_v1', ''); // optional Torn API key (Public) for online status
   let teStatus = '';
   let bestResult = null; // last "Find best traders" run (session only)
 
@@ -185,7 +187,13 @@
       if (id) byId[id] = price;
     });
     if (!Object.keys(byName).length) throw new Error(`No TE list for ${name}`);
-    const list = { trader: name, ts: Date.now(), byId, byName };
+    const text = doc.body ? doc.body.textContent : '';
+    const list = {
+      trader: name, ts: Date.now(), byId, byName,
+      rating: parseInt(doc.querySelector('#vote-score')?.textContent.trim(), 10),
+      xid: (doc.querySelector('a[href*="profiles.php?XID="]')?.getAttribute('href') || '').match(/XID=(\d+)/)?.[1] || null,
+      lastTrade: text.match(/Last trade made by this trader:\s*([^\n]+?)\s*(\n|$)/)?.[1] || null,
+    };
     listCache[norm(name)] = list;
     return list;
   }
@@ -229,6 +237,7 @@
         const dot = card.querySelector('.listing-player i.fa-circle')?.className || '';
         found.push({
           name,
+          xid: (card.querySelector('.listing-player a[href*="XID="]')?.getAttribute('href') || '').match(/XID=(\d+)/)?.[1] || null,
           rating: parseInt(card.querySelector('.listing-player .text-end')?.textContent.trim(), 10) || 0,
           status: /text-success/.test(dot) ? 'on' : /text-warning/.test(dot) ? 'idle' : 'off',
         });
@@ -289,6 +298,9 @@
         });
         rows.push({
           ...meta, total, lines,
+          rating: Number.isFinite(list.rating) ? list.rating : meta.rating,
+          xid: list.xid || meta.xid || null,
+          lastTrade: list.lastTrade,
           covPct: market ? (covValue / market) * 100 : 0,
           payPct: covValue ? (total / covValue) * 100 : 0, // what they pay vs market, on the lines they buy
         });
@@ -305,11 +317,43 @@
     });
 
     rows.sort((a, b) => b.total - a.total);
+    await addTornStatus(rows.slice(0, 8));
     const totals = rows.map((r) => r.total);
     const avg = totals.length ? totals.reduce((s, v) => s + v, 0) / totals.length : 0;
     const mid = [...totals].sort((a, b) => a - b);
     const median = mid.length ? (mid.length % 2 ? mid[(mid.length - 1) / 2] : (mid[mid.length / 2 - 1] + mid[mid.length / 2]) / 2) : 0;
     return { ts: Date.now(), rows, split, splitLines, avg, median, lineCount: items.length };
+  }
+
+  // Online status + last action from the Torn API (only with your own key set; Public access is enough)
+  async function addTornStatus(rows) {
+    if (!apiKey) return;
+    for (const r of rows) {
+      if (!r.xid) continue;
+      teStatus = `Checking who is online… ${r.name}`;
+      render();
+      try {
+        const res = await gmGet(`https://api.torn.com/user/${r.xid}?selections=profile&key=${encodeURIComponent(apiKey)}&comment=TradeBasket`);
+        const j = JSON.parse(res.responseText || '{}');
+        if (j.error) { teStatus = `Torn API: ${j.error.error}`; break; }
+        const st = j.last_action?.status;
+        if (st) r.status = st === 'Online' ? 'on' : st === 'Idle' ? 'idle' : 'off';
+        r.seen = j.last_action?.relative || null;
+      } catch (e) { /* skip this one */ }
+      await sleep(150);
+    }
+  }
+
+  // "8 minutes ago" -> "8m"
+  function shortAgo(s) {
+    if (!s) return '';
+    if (/second|now/i.test(s)) return 'now';
+    const m = s.match(/(\d+)\s*(minute|hour|day|week|month|year)/i);
+    return m ? m[1] + { minute: 'm', hour: 'h', day: 'd', week: 'w', month: 'mo', year: 'y' }[m[2].toLowerCase()] : s;
+  }
+
+  function profileUrl(t) {
+    return t.xid ? `https://www.torn.com/profiles.php?XID=${t.xid}` : `https://www.torn.com/profiles.php?NID=${encodeURIComponent(t.name)}`;
   }
 
   // Most active TE traders, in the order the TornExchange homepage lists them
@@ -463,7 +507,10 @@
         <div class="ttb-best-head">${esc(r.title)}${stale}</div>
         ${r.rows.slice(0, 8).map((t) => `
           <div class="ttb-best-row ${te && te.trader === t.name ? 'ttb-active' : ''}">
-            <span>${t.status ? `<i class="ttb-dot ttb-${t.status}"></i>` : ''}${esc(t.name)}${t.rating != null ? ` <small>★${t.rating}</small>` : ''}</span>
+            <span class="ttb-who">
+              <span>${t.status ? `<i class="ttb-dot ttb-${t.status}" title="${{ on: 'Online', idle: 'Idle', off: 'Offline' }[t.status]}"></i>` : ''}<a href="${profileUrl(t)}" target="_blank" class="ttb-prof">${esc(t.name)}</a>${t.rating != null ? ` <small title="TornExchange rating">★${t.rating}</small>` : ''}</span>
+              ${t.seen || t.lastTrade ? `<small class="ttb-seen">${[t.seen ? 'seen ' + shortAgo(t.seen) : '', t.lastTrade ? 'last trade ' + shortAgo(t.lastTrade) : ''].filter(Boolean).join(' · ')}</small>` : ''}
+            </span>
             <span title="Pays ${t.payPct.toFixed(1)}% of market on the lines they buy">${fmt(t.total)} <small>${pct(t.total)}</small></span>
             <span title="Lines this trader buys / share of market value they cover">${t.lines}/${r.lineCount} · ${t.covPct.toFixed(0)}%</span>
             <button data-act="use" data-name="${esc(t.name)}">Use</button>
@@ -534,7 +581,7 @@
         ${teOn && teStatus ? `<div class="ttb-warn"><span>${esc(teStatus)}</span></div>` : ''}
         ${teOn && bestResult ? bestHtml(market) : ''}
         <div class="ttb-actions">
-          ${teOn ? '<button data-act="best" title="Top payers for your biggest items, then priced on the whole basket">Find best traders</button><button data-act="top" title="Whole basket priced against the 20 most active TE traders">Check top traders</button><button data-act="trader">Trader</button>' : ''}
+          ${teOn ? '<button data-act="best" title="Top payers for your biggest items, then priced on the whole basket">Find best traders</button><button data-act="top" title="Whole basket priced against the 20 most active TE traders">Check top traders</button><button data-act="trader">Trader</button><button data-act="key" title="Optional Torn API key (Public access) to show who is online">' + (apiKey ? 'API ✓' : 'API key') + '</button>' : ''}
           <button data-act="refresh">Refresh prices</button>
           <button data-act="copy">Copy list</button>
           <button data-act="clear">Clear</button>
@@ -560,6 +607,10 @@
     }
     if (act === 'clear') { basket = {}; received = 0; bestResult = null; save(); syncButtons(); render(); }
     if (act === 'best' && !busy) { busy = true; findBest().finally(() => { busy = false; }); }
+    if (act === 'key') {
+      const k = prompt('Torn API key with Public access (used only to show online status / last action of traders; stored in Tampermonkey on this computer). Leave empty to remove.', apiKey);
+      if (k !== null) { apiKey = k.trim(); GM_setValue('ttb_api_key_v1', apiKey); render(); }
+    }
     if (act === 'top' && !busy) { busy = true; checkTop().finally(() => { busy = false; }); }
     if (act === 'update') {
       if (typeof TTB_FORCE_UPDATE === 'function') TTB_FORCE_UPDATE(); // live loader: pull latest commit and reload
@@ -631,6 +682,10 @@
     .ttb-foot .ttb-recv { width:150px; text-align:right; }
     .ttb-warn { color:#d9a441; }
     .ttb-ver { color:#888; }
+    .ttb-who { display:flex; flex-direction:column; min-width:0; }
+    .ttb-prof { color:inherit !important; text-decoration:none; }
+    .ttb-prof:hover { text-decoration:underline; }
+    .ttb-seen { color:#777 !important; font-size:10px; }
     .ttb-best { border-top:1px solid #444; padding-top:6px; display:block !important; }
     .ttb-best-head { color:#999; margin-bottom:4px; }
     .ttb-best-row { display:grid; grid-template-columns:1fr 130px 80px 40px; gap:6px; align-items:center; padding:3px 0; }
@@ -644,7 +699,7 @@
     #ttb-panel.ttb-no-te .ttb-row { grid-template-columns:1fr 78px 52px 92px 22px; }
     #ttb-panel.ttb-no-te .ttb-te { display:none; }
     .ttb-pos { color:#8fbf3f; } .ttb-neg { color:#e66; }
-    .ttb-actions { justify-content:flex-end !important; }
+    .ttb-actions { justify-content:flex-end !important; flex-wrap:wrap; }
   `;
   document.head.appendChild(css);
 
