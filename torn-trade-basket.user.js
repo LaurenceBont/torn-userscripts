@@ -1,11 +1,9 @@
 // ==UserScript==
 // @name         Torn Trade Basket
 // @namespace    laurence.torn
-// @version      0.7.0
+// @version      0.7.1
 // @description  Pick items on the Items page into a basket, sum market (TornTools) and TornExchange trader buy prices per line and in total, compare with what you receive.
-// @match        https://www.torn.com/item.php*
-// @match        https://www.torn.com/profiles.php*
-// @match        https://www.torn.com/trade.php*
+// @match        https://www.torn.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
@@ -21,7 +19,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.7.0'; // keep in sync with @version
+  const VERSION = '0.7.1'; // keep in sync with @version
   const RAW_URL = 'https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.user.js';
   const LIVE_SHA = typeof TTB_LOADER_SHA !== 'undefined' ? TTB_LOADER_SHA : '';
 
@@ -77,6 +75,11 @@
     GM_setValue(KEY_TE, te);
     GM_setValue('ttb_te_on_v1', teOn);
   };
+
+  // ---------- which pages the script acts on ----------
+  // The install matches all of torn.com so new pages never need a reinstall; this list decides where it runs.
+  const PAGES = ['/item.php', '/trade.php', '/profiles.php'];
+  if (!PAGES.includes(location.pathname)) return;
 
   // ---------- profile page: read username, load their TE list ----------
   if (location.pathname.startsWith('/profiles.php')) {

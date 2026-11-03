@@ -1,11 +1,9 @@
 // ==UserScript==
 // @name         Torn Trade Basket (live loader)
 // @namespace    laurence.torn.loader
-// @version      1.3.0
+// @version      1.4.0
 // @description  Loads the latest Torn Trade Basket from GitHub on every page load, so pushed changes apply on the next reload.
-// @match        https://www.torn.com/item.php*
-// @match        https://www.torn.com/profiles.php*
-// @match        https://www.torn.com/trade.php*
+// @match        https://www.torn.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
@@ -33,6 +31,11 @@
   const REPO = 'torn-userscripts';
   const FILE = 'torn-trade-basket.user.js';
   const MIN_CHECK_MS = 15 * 1000;
+
+  // Installed for all of torn.com so new pages need no reinstall: the cached script runs everywhere and
+  // decides itself where to act. The GitHub check only runs on these main pages, to stay under the rate limit.
+  const CHECK_PAGES = ['/item.php', '/trade.php'];
+  const checkHere = CHECK_PAGES.includes(location.pathname);
 
   const K_CODE = 'loader_code';
   const K_SHA = 'loader_sha';
@@ -71,7 +74,7 @@
     location.reload();
   });
 
-  latest(false).then(() => {
+  (checkHere || !GM_getValue(K_CODE, '') ? latest(false) : Promise.resolve()).then(() => {
     const code = GM_getValue(K_CODE, '');
     if (!code) { console.warn('[TTB loader] no script downloaded yet'); return; }
     try {
