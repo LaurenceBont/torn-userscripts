@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trade Basket
 // @namespace    laurence.torn
-// @version      0.6.1
+// @version      0.6.2
 // @description  Pick items on the Items page into a basket, sum market (TornTools) and TornExchange trader buy prices per line and in total, compare with what you receive.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
@@ -20,10 +20,12 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.6.1'; // keep in sync with @version
+  const VERSION = '0.6.2'; // keep in sync with @version
   const RAW_URL = 'https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.user.js';
   const LIVE_SHA = typeof TTB_LOADER_SHA !== 'undefined' ? TTB_LOADER_SHA : '';
 
+  // Storage contract: these keys and the basket entry shape stay the same across versions, so updates keep
+  // your basket. New fields must be optional (old entries without them still work); only Clear empties it.
   const KEY = 'ttb_basket_v1';
   const KEY_RECV = 'ttb_received_v1';
   const KEY_OPEN = 'ttb_open_v1';
@@ -641,7 +643,10 @@
       const id = decodeURIComponent(e.target.closest('.ttb-row').dataset.id);
       delete basket[id]; save(); syncButtons(); render();
     }
-    if (act === 'clear') { basket = {}; received = 0; bestResult = null; save(); syncButtons(); render(); }
+    if (act === 'clear') {
+      if (Object.keys(basket).length && !confirm(`Clear the basket (${Object.keys(basket).length} lines)?`)) return;
+      basket = {}; received = 0; bestResult = null; save(); syncButtons(); render();
+    }
     if (act === 'best' && !busy) { busy = true; findBest().finally(() => { busy = false; }); }
     if (act === 'key') {
       const k = prompt('Torn API key with Public access (used only to show online status / last action of traders; stored in Tampermonkey on this computer). Leave empty to remove.', apiKey);
