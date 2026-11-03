@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trade Basket
 // @namespace    laurence.torn
-// @version      0.6.0
+// @version      0.6.1
 // @description  Pick items on the Items page into a basket, sum market (TornTools) and TornExchange trader buy prices per line and in total, compare with what you receive.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
@@ -20,7 +20,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.6.0'; // keep in sync with @version
+  const VERSION = '0.6.1'; // keep in sync with @version
   const RAW_URL = 'https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.user.js';
   const LIVE_SHA = typeof TTB_LOADER_SHA !== 'undefined' ? TTB_LOADER_SHA : '';
 
@@ -482,6 +482,42 @@
   panel.id = 'ttb-panel';
   document.body.appendChild(panel);
 
+  // Default sits above Torn's chat bar and its notification badges; drag the header to move it (position is remembered)
+  const KEY_POS = 'ttb_pos_v1';
+  function applyPos(pos) {
+    if (!pos) return;
+    const r = Math.max(0, Math.min(pos.right, window.innerWidth - 120));
+    const b = Math.max(0, Math.min(pos.bottom, window.innerHeight - 40));
+    panel.style.right = r + 'px';
+    panel.style.bottom = b + 'px';
+    panel.style.maxHeight = `calc(100vh - ${b + 20}px)`;
+  }
+  applyPos(GM_getValue(KEY_POS, null));
+  panel.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !e.target.closest('.ttb-head') || e.target.closest('button, a, input')) return;
+    e.preventDefault();
+    const rect = panel.getBoundingClientRect();
+    const startX = e.clientX, startY = e.clientY;
+    const startR = window.innerWidth - rect.right, startB = window.innerHeight - rect.bottom;
+    let pos = null;
+    const move = (ev) => {
+      pos = { right: startR - (ev.clientX - startX), bottom: startB - (ev.clientY - startY) };
+      applyPos(pos);
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      if (pos) GM_setValue(KEY_POS, pos);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  panel.addEventListener('dblclick', (e) => {
+    if (!e.target.closest('.ttb-head') || e.target.closest('button, a, input')) return;
+    GM_setValue(KEY_POS, null);
+    panel.style.right = panel.style.bottom = panel.style.maxHeight = ''; // back to default spot
+  });
+
   function totals() {
     let market = 0, teSum = 0, missing = 0;
     Object.values(basket).forEach((b) => {
@@ -658,11 +694,12 @@
       background:#333; color:#ccc; font-weight:bold; cursor:pointer; line-height:16px; padding:0; vertical-align:middle; }
     .ttb-add.ttb-by-price { margin:0 0 0 8px; }
     .ttb-add.ttb-in { background:#4b6b1f; border-color:#8fbf3f; color:#fff; }
-    #ttb-panel { position:fixed; right:12px; bottom:12px; width:540px; max-width:calc(100vw - 24px); z-index:99999;
+    #ttb-panel { position:fixed; right:12px; bottom:110px; width:540px; max-width:calc(100vw - 24px); z-index:999999;
+      max-height:calc(100vh - 130px); overflow-y:auto;
       background:#222; color:#ddd; border:1px solid #444; border-radius:6px; font:12px Arial,sans-serif;
       box-shadow:0 4px 16px rgba(0,0,0,.5); }
     #ttb-panel button { background:#3a3a3a; color:#ddd; border:1px solid #555; border-radius:3px; cursor:pointer; padding:2px 6px; }
-    .ttb-head { display:flex; gap:8px; align-items:center; padding:8px; border-bottom:1px solid #444; }
+    .ttb-head { display:flex; gap:8px; align-items:center; padding:8px; border-bottom:1px solid #444; cursor:move; user-select:none; }
     .ttb-head span { flex:1; color:#9c9; }
     .ttb-body { max-height:300px; overflow-y:auto; }
     .ttb-empty { padding:10px; color:#888; }
