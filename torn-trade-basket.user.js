@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trade Basket
 // @namespace    laurence.torn
-// @version      0.4.1
+// @version      0.5.0
 // @description  Pick items on the Items page into a basket, sum market (TornTools) and TornExchange trader buy prices per line and in total, compare with what you receive.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
@@ -18,6 +18,10 @@
 
 (function () {
   'use strict';
+
+  const VERSION = '0.5.0'; // keep in sync with @version
+  const RAW_URL = 'https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.user.js';
+  const LIVE_SHA = typeof TTB_LOADER_SHA !== 'undefined' ? TTB_LOADER_SHA : '';
 
   const KEY = 'ttb_basket_v1';
   const KEY_RECV = 'ttb_received_v1';
@@ -257,37 +261,85 @@
         (await topTradersFor(anchors[i], 5)).forEach((t) => { if (!traders.has(t.name)) traders.set(t.name, t); });
       }
 
-      const rows = [];
-      const lists = [];
-      let n = 0;
-      for (const [name, meta] of traders) {
-        teStatus = `Loading price lists ${++n}/${traders.size}…`;
-        render();
-        try {
-          const list = await loadTEp(name);
-          lists.push(list);
-          let total = 0, lines = 0, covValue = 0;
-          items.forEach((b) => {
-            const p = priceIn(list, b);
-            if (p == null) return;
-            total += p * b.qty; lines++; covValue += b.price * b.qty;
-          });
-          rows.push({ ...meta, total, lines, covPct: market ? (covValue / market) * 100 : 0 });
-        } catch (e) { /* trader without readable list, skip */ }
-        await sleep(400);
-      }
+      const scored = await scoreTraders(items, market, traders);
+      bestResult = { ...scored, title: `Best traders for: ${anchors.map((a) => a.name).join(', ')}` };
+      teStatus = scored.rows.length ? '' : 'No traders found for the top items';
+    } catch (e) {
+      teStatus = e.message;
+    }
+    render();
+  }
 
-      // best split: each line to whichever found trader pays most for it
-      let split = 0, splitLines = 0;
-      items.forEach((b) => {
-        let best = null;
-        lists.forEach((l) => { const p = priceIn(l, b); if (p != null && (best == null || p > best)) best = p; });
-        if (best != null) { split += best * b.qty; splitLines++; }
-      });
+  // Price the whole basket against each trader's list; also best split, average and median
+  async function scoreTraders(items, market, traders) {
+    const rows = [];
+    const lists = [];
+    let n = 0;
+    for (const [name, meta] of traders) {
+      teStatus = `Loading price lists ${++n}/${traders.size}…`;
+      render();
+      try {
+        const list = await loadTEp(name);
+        lists.push(list);
+        let total = 0, lines = 0, covValue = 0;
+        items.forEach((b) => {
+          const p = priceIn(list, b);
+          if (p == null) return;
+          total += p * b.qty; lines++; covValue += b.price * b.qty;
+        });
+        rows.push({
+          ...meta, total, lines,
+          covPct: market ? (covValue / market) * 100 : 0,
+          payPct: covValue ? (total / covValue) * 100 : 0, // what they pay vs market, on the lines they buy
+        });
+      } catch (e) { /* trader without readable list, skip */ }
+      await sleep(400);
+    }
 
-      rows.sort((a, b) => b.total - a.total);
-      bestResult = { ts: Date.now(), rows, split, splitLines, lineCount: items.length, anchors: anchors.map((a) => a.name) };
-      teStatus = rows.length ? '' : 'No traders found for the top items';
+    // best split: each line to whichever trader pays most for it
+    let split = 0, splitLines = 0;
+    items.forEach((b) => {
+      let best = null;
+      lists.forEach((l) => { const p = priceIn(l, b); if (p != null && (best == null || p > best)) best = p; });
+      if (best != null) { split += best * b.qty; splitLines++; }
+    });
+
+    rows.sort((a, b) => b.total - a.total);
+    const totals = rows.map((r) => r.total);
+    const avg = totals.length ? totals.reduce((s, v) => s + v, 0) / totals.length : 0;
+    const mid = [...totals].sort((a, b) => a - b);
+    const median = mid.length ? (mid.length % 2 ? mid[(mid.length - 1) / 2] : (mid[mid.length / 2 - 1] + mid[mid.length / 2]) / 2) : 0;
+    return { ts: Date.now(), rows, split, splitLines, avg, median, lineCount: items.length };
+  }
+
+  // Most active TE traders, in the order the TornExchange homepage lists them
+  async function activeTraders(limit) {
+    const res = await gmGet('https://www.tornexchange.com/');
+    if (res.status !== 200) throw new Error(`TE homepage error ${res.status}`);
+    const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+    const names = [];
+    doc.querySelectorAll('a[href*="/prices/"]').forEach((a) => {
+      const m = (a.getAttribute('href') || '').match(/\/prices\/([^/?#]+)\/?/);
+      if (!m) return;
+      const name = decodeURIComponent(m[1]);
+      if (name && !names.includes(name)) names.push(name);
+    });
+    return names.slice(0, limit);
+  }
+
+  async function checkTop() {
+    const items = Object.values(basket).filter((b) => b.qty > 0);
+    if (!items.length) return;
+    const market = items.reduce((s, b) => s + b.price * b.qty, 0);
+    try {
+      teStatus = 'Loading top TE traders…';
+      render();
+      const names = await activeTraders(20);
+      if (!names.length) throw new Error('No traders found on TE homepage');
+      const traders = new Map(names.map((name) => [name, { name }]));
+      const scored = await scoreTraders(items, market, traders);
+      bestResult = { ...scored, title: `Top ${names.length} most active TE traders` };
+      teStatus = scored.rows.length ? '' : 'Could not load any top trader lists';
     } catch (e) {
       teStatus = e.message;
     }
@@ -408,14 +460,19 @@
     const stale = r.lineCount !== Object.keys(basket).length ? ' <span class="ttb-warn">(basket changed, run again)</span>' : '';
     return `
       <div class="ttb-best">
-        <div class="ttb-best-head">Best traders for: ${r.anchors.map(esc).join(', ')}${stale}</div>
+        <div class="ttb-best-head">${esc(r.title)}${stale}</div>
         ${r.rows.slice(0, 8).map((t) => `
           <div class="ttb-best-row ${te && te.trader === t.name ? 'ttb-active' : ''}">
-            <span><i class="ttb-dot ttb-${t.status}"></i>${esc(t.name)} <small>★${t.rating}</small></span>
-            <span>${fmt(t.total)} <small>${pct(t.total)}</small></span>
+            <span>${t.status ? `<i class="ttb-dot ttb-${t.status}"></i>` : ''}${esc(t.name)}${t.rating != null ? ` <small>★${t.rating}</small>` : ''}</span>
+            <span title="Pays ${t.payPct.toFixed(1)}% of market on the lines they buy">${fmt(t.total)} <small>${pct(t.total)}</small></span>
             <span title="Lines this trader buys / share of market value they cover">${t.lines}/${r.lineCount} · ${t.covPct.toFixed(0)}%</span>
             <button data-act="use" data-name="${esc(t.name)}">Use</button>
           </div>`).join('')}
+        <div class="ttb-best-row ttb-split">
+          <span>Average of ${r.rows.length} traders (median)</span>
+          <span>${fmt(r.avg)} <small>${pct(r.avg)}</small></span>
+          <span>${fmt(r.median)}</span><span></span>
+        </div>
         <div class="ttb-best-row ttb-split">
           <span>Best split (each line to top payer)</span>
           <span>${fmt(r.split)} <small>${pct(r.split)}</small></span>
@@ -435,6 +492,8 @@
     panel.innerHTML = `
       <div class="ttb-head">
         <b>Trade basket</b>
+        <small class="ttb-ver" title="${LIVE_SHA ? 'Running via live loader, commit ' + LIVE_SHA : 'Installed script'}">v${VERSION}${LIVE_SHA ? ' · live ' + LIVE_SHA.slice(0, 7) : ''}</small>
+        <button data-act="update" title="Pull the latest version from GitHub">⟳</button>
         <span>${items.length} lines · ${fmt(market)}${showTE ? ` · TE ${fmt(teSum)}` : ''}</span>
         <button data-act="te" class="ttb-switch ${teOn ? 'ttb-switch-on' : ''}"
           title="When on: loads TornExchange prices and, on a trader's profile, switches to their list">TE ${teOn ? 'ON' : 'OFF'}</button>
@@ -475,7 +534,7 @@
         ${teOn && teStatus ? `<div class="ttb-warn"><span>${esc(teStatus)}</span></div>` : ''}
         ${teOn && bestResult ? bestHtml(market) : ''}
         <div class="ttb-actions">
-          ${teOn ? '<button data-act="best">Find best traders</button><button data-act="trader">Trader</button>' : ''}
+          ${teOn ? '<button data-act="best" title="Top payers for your biggest items, then priced on the whole basket">Find best traders</button><button data-act="top" title="Whole basket priced against the 20 most active TE traders">Check top traders</button><button data-act="trader">Trader</button>' : ''}
           <button data-act="refresh">Refresh prices</button>
           <button data-act="copy">Copy list</button>
           <button data-act="clear">Clear</button>
@@ -501,6 +560,11 @@
     }
     if (act === 'clear') { basket = {}; received = 0; bestResult = null; save(); syncButtons(); render(); }
     if (act === 'best' && !busy) { busy = true; findBest().finally(() => { busy = false; }); }
+    if (act === 'top' && !busy) { busy = true; checkTop().finally(() => { busy = false; }); }
+    if (act === 'update') {
+      if (typeof TTB_FORCE_UPDATE === 'function') TTB_FORCE_UPDATE(); // live loader: pull latest commit and reload
+      else window.open(RAW_URL, '_blank'); // normal install: Tampermonkey opens its update dialog for the raw file
+    }
     if (act === 'use') useTrader(e.target.dataset.name);
     if (act === 'refresh') refreshPrices();
     if (act === 'trader') {
@@ -566,6 +630,7 @@
     .ttb-foot small { color:#999; font-weight:normal; }
     .ttb-foot .ttb-recv { width:150px; text-align:right; }
     .ttb-warn { color:#d9a441; }
+    .ttb-ver { color:#888; }
     .ttb-best { border-top:1px solid #444; padding-top:6px; display:block !important; }
     .ttb-best-head { color:#999; margin-bottom:4px; }
     .ttb-best-row { display:grid; grid-template-columns:1fr 130px 80px 40px; gap:6px; align-items:center; padding:3px 0; }
