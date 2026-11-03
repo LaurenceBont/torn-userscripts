@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Torn Trade Basket
 // @namespace    laurence.torn
-// @version      0.6.2
+// @version      0.7.0
 // @description  Pick items on the Items page into a basket, sum market (TornTools) and TornExchange trader buy prices per line and in total, compare with what you receive.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
+// @match        https://www.torn.com/trade.php*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
@@ -20,7 +21,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.6.2'; // keep in sync with @version
+  const VERSION = '0.7.0'; // keep in sync with @version
   const RAW_URL = 'https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.user.js';
   const LIVE_SHA = typeof TTB_LOADER_SHA !== 'undefined' ? TTB_LOADER_SHA : '';
 
@@ -477,6 +478,70 @@
 
   function scan() {
     document.querySelectorAll('ul.itemsList > li').forEach(decorate);
+    if (onTradeAdd()) {
+      decorateTrade();
+      const n = tradeRows().length;
+      if (n !== lastTradeCount) { lastTradeCount = n; render(); } // refresh "x/y found" as rows load
+    }
+  }
+  let lastTradeCount = -1;
+  window.addEventListener('hashchange', () => { lastTradeCount = -1; render(); scan(); });
+
+  // ---------- trade page (trade.php#step=add): highlight basket items, fill their qty fields ----------
+  // Only fills the quantity inputs. It never clicks "Add to trade"; you review and confirm that yourself.
+  const onTradeAdd = () => location.pathname === '/trade.php' && /step=add/.test(location.hash);
+  const cleanName = (s) => norm(String(s || '').replace(/\s*x\s*[\d,]+\s*$/i, ''));
+
+  function tradeRows() {
+    const rows = [];
+    document.querySelectorAll('#trade-container li').forEach((li) => {
+      const nameEl = li.querySelector('.name');
+      if (!nameEl || li.querySelector('li')) return; // skip wrappers that contain other rows
+      const name = cleanName(nameEl.textContent);
+      const b = Object.values(basket).find((x) => cleanName(x.name) === name);
+      if (b) rows.push({ li, b, nameEl });
+    });
+    return rows;
+  }
+
+  function qtyInput(li) {
+    return li.querySelector('input[type="text"], input[type="number"], input:not([type])');
+  }
+
+  function setInput(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, String(value));
+    ['input', 'keyup', 'change', 'blur'].forEach((type) => input.dispatchEvent(new Event(type, { bubbles: true })));
+  }
+
+  function fillRow(row, empty) {
+    const input = qtyInput(row.li);
+    if (input) { setInput(input, empty ? '' : row.b.qty); return true; }
+    const box = row.li.querySelector('input[type="checkbox"]'); // weapons/armor: single item checkbox
+    if (box && box.checked === !!empty) { box.click(); return true; }
+    return false;
+  }
+
+  function decorateTrade() {
+    tradeRows().forEach((row) => {
+      row.li.classList.add('ttb-trade-hit');
+      const tradable = qtyInput(row.li) || row.li.querySelector('input[type="checkbox"]');
+      let btn = row.li.querySelector('.ttb-fill');
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ttb-fill';
+        btn.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          const r = tradeRows().find((x) => x.li === row.li); // re-read so the current basket qty is used
+          if (r) fillRow(r);
+        });
+        row.nameEl.after(btn);
+      }
+      const label = tradable ? `Fill ${row.b.qty}` : 'in basket';
+      if (btn.textContent !== label) btn.textContent = label;
+      btn.disabled = !tradable;
+    });
   }
 
   // ---------- panel ----------
@@ -607,6 +672,14 @@
         }).join('')}
       </div>
       <div class="ttb-foot">
+        ${onTradeAdd() ? (() => {
+          const n = tradeRows().length;
+          return `<div class="ttb-tradebar">
+            <span>In this trade page: <b>${n}/${items.length}</b> basket lines found${n < items.length ? ' <small>(scroll to load the rest)</small>' : ''}</span>
+            <span><button data-act="fillall" title="Fills the quantity fields only; you still click Add to trade yourself">Fill basket qty</button>
+            <button data-act="unfill">Empty fields</button></span>
+          </div>`;
+        })() : ''}
         <div><span>Market value</span><b>${fmt(market)}</b></div>
         ${teOn ? `
         <div><span>TE buy (${esc(te ? te.trader : trader)}, ${teAge()})</span>
@@ -648,6 +721,7 @@
       basket = {}; received = 0; bestResult = null; save(); syncButtons(); render();
     }
     if (act === 'best' && !busy) { busy = true; findBest().finally(() => { busy = false; }); }
+    if (act === 'fillall' || act === 'unfill') tradeRows().forEach((row) => fillRow(row, act === 'unfill'));
     if (act === 'key') {
       const k = prompt('Torn API key with Public access (used only to show online status / last action of traders; stored in Tampermonkey on this computer). Leave empty to remove.', apiKey);
       if (k !== null) { apiKey = k.trim(); GM_setValue('ttb_api_key_v1', apiKey); render(); }
@@ -724,6 +798,12 @@
     .ttb-foot .ttb-recv { width:150px; text-align:right; }
     .ttb-warn { color:#d9a441; }
     .ttb-ver { color:#888; }
+    .ttb-trade-hit { box-shadow:inset 3px 0 0 #8fbf3f; background:rgba(143,191,63,.12) !important; }
+    .ttb-fill { margin-left:8px; padding:1px 6px; font-size:11px; background:#4b6b1f; color:#fff; border:1px solid #8fbf3f;
+      border-radius:3px; cursor:pointer; vertical-align:middle; }
+    .ttb-fill:disabled { background:#333; border-color:#555; color:#888; cursor:default; }
+    .ttb-tradebar { border-bottom:1px solid #444; padding-bottom:6px; }
+    .ttb-tradebar small { color:#888; }
     .ttb-who { display:flex; flex-direction:column; min-width:0; }
     .ttb-prof { color:inherit !important; text-decoration:none; }
     .ttb-prof:hover { text-decoration:underline; }

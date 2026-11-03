@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Torn Trade Basket (live loader)
 // @namespace    laurence.torn.loader
-// @version      1.2.0
+// @version      1.3.0
 // @description  Loads the latest Torn Trade Basket from GitHub on every page load, so pushed changes apply on the next reload.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
+// @match        https://www.torn.com/trade.php*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
