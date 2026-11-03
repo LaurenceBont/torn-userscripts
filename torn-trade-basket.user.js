@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trade Basket
 // @namespace    laurence.torn
-// @version      0.4.0
+// @version      0.4.1
 // @description  Pick items on the Items page into a basket, sum market (TornTools) and TornExchange trader buy prices per line and in total, compare with what you receive.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
@@ -25,6 +25,27 @@
   const KEY_TRADER = 'ttb_te_trader_v1';
   const KEY_TE = 'ttb_te_list_v1';
   const TE_STALE_MS = 30 * 60 * 1000;
+
+  // ---------- hand-over between the normal script and the live loader ----------
+  // Each Tampermonkey script has its own storage. The normal script leaves a copy of its data in
+  // torn.com localStorage; the loader version imports it once while its own storage is still empty.
+  const HANDOVER = 'ttb_handover_v1';
+  const ALL_KEYS = [KEY, KEY_RECV, KEY_OPEN, KEY_TRADER, KEY_TE, 'ttb_te_on_v1'];
+  const viaLoader = typeof TTB_LOADER !== 'undefined';
+  try {
+    if (viaLoader) {
+      const raw = localStorage.getItem(HANDOVER);
+      if (raw && GM_getValue(KEY, null) === null) {
+        const data = JSON.parse(raw);
+        ALL_KEYS.forEach((k) => { if (k in data && data[k] !== null) GM_setValue(k, data[k]); });
+        localStorage.removeItem(HANDOVER);
+      }
+    } else if (GM_getValue(KEY, null) !== null) {
+      const data = {};
+      ALL_KEYS.forEach((k) => { data[k] = GM_getValue(k, null); });
+      localStorage.setItem(HANDOVER, JSON.stringify(data));
+    }
+  } catch (e) { /* storage blocked, start fresh */ }
 
   let basket = GM_getValue(KEY, {});        // id -> { id, itemId, name, price, maxQty, qty }
   let received = GM_getValue(KEY_RECV, 0);

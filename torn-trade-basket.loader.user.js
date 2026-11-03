@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trade Basket (live loader)
 // @namespace    laurence.torn.loader
-// @version      1.0.0
+// @version      1.0.1
 // @description  Loads the latest Torn Trade Basket from GitHub on every page load, so pushed changes apply on the next reload.
 // @match        https://www.torn.com/item.php*
 // @match        https://www.torn.com/profiles.php*
@@ -73,6 +73,7 @@
     const code = GM_getValue(K_CODE, '');
     if (!code) { console.warn('[TTB loader] no script downloaded yet'); return; }
     try {
+      const TTB_LOADER = true; // tells the loaded script it runs via the loader (used for the one-time data hand-over)
       // direct eval keeps the GM_* functions of this script in scope for the loaded code
       eval(code + `\n//# sourceURL=${FILE}@${GM_getValue(K_SHA, '').slice(0, 7)}`);
     } catch (e) {
