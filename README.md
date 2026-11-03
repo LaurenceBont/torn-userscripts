@@ -12,4 +12,8 @@ https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-
 
 Updates are picked up automatically through Tampermonkey's update check (or Tampermonkey menu > "Check for userscript updates").
 
+**Live version (instant updates):** install the loader instead, and disable or remove the normal script so it doesn't run twice. The loader fetches the latest commit from GitHub on each page load (checked at most every 15 seconds), so a push is live on the next reload.
+
+https://raw.githubusercontent.com/LaurenceBont/torn-userscripts/main/torn-trade-basket.loader.user.js
+
 Only reads the page; it does not click or act in Torn. TornExchange requests run only when the TE switch in the basket is ON.
